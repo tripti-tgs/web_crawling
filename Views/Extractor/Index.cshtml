@@ -1,0 +1,54 @@
+﻿@model List<ProjectData>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Website Scraper</title>
+    <link rel="stylesheet" href="~/css/site.css" />
+</head>
+<body>
+    <div class="container mt-5">
+        <h1 class="my-4 text-center">Website Scraper</h1>
+        <form asp-controller="Extractor" asp-action="Submit" method="post" class="border p-4 rounded">
+            <div class="form-group">
+                <label for="projectSelect" class="font-weight-bold">Select a Website:</label>
+                <select id="projectSelect" name="selectedProjectName" class="form-control" required>
+                    <option value="">Select a website</option>
+                    @if (Model != null && Model.Any())
+                    {
+                        @foreach (var project in Model)
+                        {
+                            <option value="@project.Name">@project.Name</option>
+                        }
+                    }
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary btn-block mt-3">Submit</button>
+        </form>
+        @if (ViewBag.Status == "Success")
+        {
+            <div class="mt-4">
+                <h2>@ViewBag.SelectedProjectName</h2>
+                <form asp-controller="Extractor" asp-action="DownloadJson" method="post">
+                    <input type="hidden" id="hiddenFileContent" name="fileContent" value="@ViewBag.TextValue" />
+                    <input type="hidden" id="hiddenSelectedProjectName" name="selectedProjectName" value="@ViewBag.SelectedProjectName" />
+                    <button type="submit" class="btn btn-success">Save JSON File</button>
+                </form>
+            </div>
+            <div class="mt-4">
+                <h4 class="font-weight-bold">Extracted Data:</h4>
+                <pre class="border p-3 bg-light rounded">@ViewBag.TextValue</pre>
+            </div>
+        }
+        else if (ViewBag.Status == "Error")
+        {
+            <div class="mt-4 alert alert-danger">
+                <h2 class="alert-heading">Error</h2>
+                <p>@ViewBag.Message</p>
+            </div>
+        }
+    </div>
+  
+</body>
+</html>
