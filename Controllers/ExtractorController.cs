@@ -51,7 +51,15 @@ public class ExtractorController : Controller
         {
             var allResults = new List<Dictionary<string, object>>();
 
-            var result = await _websiteContentExtractor.ExtractDataFromUrlAsync(selectedProject.Url, selectedProject.Page, selectedProject.Data);
+            var result = await _websiteContentExtractor.ExtractDataFromUrlAsync
+                (
+                selectedProject.Url,
+                selectedProject.PageXpath,
+                selectedProject.Data,
+                selectedProject.LoginURL,
+                selectedProject.LoginData,
+                selectedProject.SubmitButtonXpath
+                );
             allResults.Add(result);
 
             var jsonValue = JsonConvert.SerializeObject(allResults, Formatting.Indented, new JsonSerializerSettings

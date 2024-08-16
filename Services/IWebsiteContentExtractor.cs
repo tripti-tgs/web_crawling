@@ -2,5 +2,13 @@
 
 public interface IWebsiteContentExtractor
 {
-    Task<Dictionary<string, object>> ExtractDataFromUrlAsync(string url, int? page, List<Field> fields);
+    Task<Dictionary<string, object>> ExtractDataFromUrlAsync
+        (
+        string url, 
+        string? PageXpath, 
+        List<Field> fields,
+        string? LoginURL,
+        List<LoginField> LoginData,
+        string ? SubmitButtonXpath
+        );
 }
