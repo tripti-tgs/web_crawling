@@ -1,23 +1,27 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Hangfire;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Newtonsoft.Json;
-using System.Text;
 using web_crawling.Models;
 
 public class ExtractorController : Controller
 {
     private readonly IWebsiteContentExtractor _websiteContentExtractor;
     private readonly List<ProjectData> _projects;
+    private readonly IWebHostEnvironment _webHostEnvironment;
 
-    public ExtractorController(IWebsiteContentExtractor websiteContentExtractor, IOptions<List<ProjectData>> projectDataOptions)
+    public ExtractorController(IWebsiteContentExtractor websiteContentExtractor,
+        IOptions<List<ProjectData>> projectDataOptions, IWebHostEnvironment webHostEnvironment)
     {
         _websiteContentExtractor = websiteContentExtractor;
         _projects = projectDataOptions.Value;
+        _webHostEnvironment = webHostEnvironment;
     }
 
     [HttpGet]
     public IActionResult Index()
     {
+
         return View(_projects);
     }
 
@@ -51,15 +55,17 @@ public class ExtractorController : Controller
         {
             var allResults = new List<Dictionary<string, object>>();
 
-            var result = await _websiteContentExtractor.ExtractDataFromUrlAsync
-                (
+            var result = await _websiteContentExtractor.ExtractDataFromUrlAsync(
+               selectedProject.Name,
                 selectedProject.Url,
                 selectedProject.PageXpath,
                 selectedProject.Data,
                 selectedProject.LoginURL,
                 selectedProject.LoginData,
                 selectedProject.SubmitButtonXpath
-                );
+               
+            );
+
             allResults.Add(result);
 
             var jsonValue = JsonConvert.SerializeObject(allResults, Formatting.Indented, new JsonSerializerSettings
@@ -84,28 +90,5 @@ public class ExtractorController : Controller
         return View("Index", _projects);
     }
 
-    [HttpPost]
-    public IActionResult DownloadJson(string selectedProjectName, string fileContent)
-    {
-        var selectedProject = _projects.FirstOrDefault(p => p.Name == selectedProjectName);
-
-        if (selectedProject == null)
-        {
-            return BadRequest("Project not found.");
-        }
-
-        var directoryPath = selectedProject.DirectoryPath;
-
-        var fileName = string.IsNullOrEmpty(selectedProject.FileName) ? "Sample.json" : $"{selectedProject.FileName}.json";
-        var filePath = Path.Combine(directoryPath, fileName);
-
-        if (!Directory.Exists(directoryPath))
-        {
-            Directory.CreateDirectory(directoryPath);
-        }
-
-        System.IO.File.WriteAllText(filePath, fileContent, Encoding.UTF8);
-
-        return PhysicalFile(filePath, "application/json", Path.GetFileName(filePath));
-    }
+  
 }

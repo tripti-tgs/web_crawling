@@ -14,5 +14,6 @@
         public List<LoginField> LoginData { get; set; }
 
         public string? SubmitButtonXpath { get; set; }
+        public string IntervalMinutes { get; set; }
     }
 }

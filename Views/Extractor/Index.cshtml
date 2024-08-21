@@ -26,16 +26,10 @@
             </div>
             <button type="submit" class="btn btn-primary btn-block mt-3">Submit</button>
         </form>
+  
         @if (ViewBag.Status == "Success")
         {
-            <div class="mt-4">
-                <h2>@ViewBag.SelectedProjectName</h2>
-                <form asp-controller="Extractor" asp-action="DownloadJson" method="post">
-                    <input type="hidden" id="hiddenFileContent" name="fileContent" value="@ViewBag.TextValue" />
-                    <input type="hidden" id="hiddenSelectedProjectName" name="selectedProjectName" value="@ViewBag.SelectedProjectName" />
-                    <button type="submit" class="btn btn-success">Save JSON File</button>
-                </form>
-            </div>
+         
             <div class="mt-4">
                 <h4 class="font-weight-bold">Extracted Data:</h4>
                 <pre class="border p-3 bg-light rounded">@ViewBag.TextValue</pre>
@@ -49,6 +43,5 @@
             </div>
         }
     </div>
-  
 </body>
 </html>

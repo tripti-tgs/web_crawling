@@ -5,25 +5,33 @@ using OpenQA.Selenium;
 using OpenQA.Selenium.Chrome;
 using OpenQA.Selenium.Support.UI;
 using SeleniumExtras.WaitHelpers;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 public class WebsiteContentExtractor : IWebsiteContentExtractor, IDisposable
 {
     // Selenium WebDriver for interacting with the browser
-    private readonly IWebDriver driver;
+    private  IWebDriver driver;
 
     // WebDriverWait to wait for certain conditions during interaction with the browser
-    private readonly WebDriverWait wait;
+    private  WebDriverWait wait;
+    private readonly IWebHostEnvironment _webHostEnvironment;
 
-    public WebsiteContentExtractor()
+    public WebsiteContentExtractor( IWebHostEnvironment webHostEnvironment)
     {
-        // Initialize ChromeDriver
-        driver = new ChromeDriver();
-
-        // Set a default wait time of 10 seconds for WebDriverWait
-        wait = new WebDriverWait(driver, TimeSpan.FromSeconds(10));
+        _webHostEnvironment = webHostEnvironment;
     }
-
-    public async Task<Dictionary<string, object>> ExtractDataFromUrlAsync(string url, string? PageXpath, List<Field> fields, string? LoginURL, List<LoginField> LoginData, string? SubmitButtonXpath)
+    private void InitializeWebDriver()
+    {
+        if (driver == null)
+        {
+            driver = new ChromeDriver();
+            wait = new WebDriverWait(driver, TimeSpan.FromSeconds(10));
+        }
+    }
+    public async Task<Dictionary<string, object>> ExtractDataFromUrlAsync(string? Name ,string url,
+        string? PageXpath, List<Field> fields, string? LoginURL, 
+        List<LoginField> LoginData, string? SubmitButtonXpath)
     {
         // Dictionary to store the results of the extraction process
         var results = new Dictionary<string, object> { { "Status", "Success" } };
@@ -49,6 +57,7 @@ public class WebsiteContentExtractor : IWebsiteContentExtractor, IDisposable
                 // If LoginURL is provided, perform login operations using Selenium
                 if (!string.IsNullOrWhiteSpace(LoginURL))
                 {
+                    InitializeWebDriver();
                     // Navigate to the login URL
                     driver.Navigate().GoToUrl(LoginURL);
 
@@ -73,6 +82,7 @@ public class WebsiteContentExtractor : IWebsiteContentExtractor, IDisposable
                 // If PageXpath is provided, handle pagination using Selenium
                 if (!string.IsNullOrWhiteSpace(PageXpath))
                 {
+                    InitializeWebDriver();
                     // Navigate to the initial URL
                     driver.Navigate().GoToUrl(url);
                     bool hasNextPage = true;
@@ -125,7 +135,26 @@ public class WebsiteContentExtractor : IWebsiteContentExtractor, IDisposable
             }
 
             // Store the extracted data in the results dictionary
-            results["ExtractedData"] = allExtractedData;
+
+            // Initialize the list
+            var allResults = new List<Dictionary<string, object>>();
+
+            // Add extracted data to the list
+            // (Assuming `allExtractedData` is a variable containing the data to add)
+            allResults.AddRange(allExtractedData);
+
+            // Serialize the list to JSON
+            var jsonValue = JsonConvert.SerializeObject(allResults, Formatting.Indented, new JsonSerializerSettings
+            {
+                ReferenceLoopHandling = ReferenceLoopHandling.Ignore,
+                NullValueHandling = NullValueHandling.Ignore
+            });
+
+            // Assuming `results` is a dictionary defined elsewhere
+            results["ExtractedData"] = jsonValue;
+
+            // Save the JSON to a file
+            await SaveJsonAsync(Name, jsonValue);
         }
         catch (Exception ex)
         {
@@ -269,7 +298,121 @@ public class WebsiteContentExtractor : IWebsiteContentExtractor, IDisposable
     // Dispose method to clean up the WebDriver instance
     public void Dispose()
     {
-        driver?.Quit();
-        driver?.Dispose();
+        if (driver != null)
+        {
+            driver.Quit();
+            driver.Dispose();
+            driver = null;
+        }
+    }
+    private async Task SaveJsonAsync(string selectedProjectName, string fileContent)
+    {
+        if (string.IsNullOrWhiteSpace(fileContent) || string.IsNullOrEmpty(selectedProjectName))
+        {
+            // Handle empty content or name
+            return;
+        }
+
+        try
+        {
+            // Validate and parse the JSON content
+            var parsedJson = Newtonsoft.Json.Linq.JToken.Parse(fileContent);
+
+            // Specify a custom directory path for the JSON file
+            string customDirectory = Path.Combine("Uploads", $"{selectedProjectName}-{DateTime.Now:yyyyMMdd_HHmmss}");
+            Directory.CreateDirectory(customDirectory);
+
+            // Construct the full file path with the ".json" extension
+            string filePath = Path.Combine(customDirectory, $"{selectedProjectName}.json");
+           
+            // Create a new subfolder for the assets
+            string assetsDirectory = Path.Combine(customDirectory, "assets");
+            Directory.CreateDirectory(assetsDirectory);
+
+
+            // Save the JSON content to the specified file
+            await System.IO.File.WriteAllTextAsync(filePath, fileContent);
+
+            // Extract URLs from the JSON content
+            var urls = ExtractUrlsFromJson(parsedJson);
+
+            // Download files into the same directory
+           // var newURL = "https://www.princexml.com/howcome/2016/samples/magic8/index.pdf";
+                await DownloadFilesAsync(urls, assetsDirectory);
+            
+        }
+        catch (Newtonsoft.Json.JsonException ex)
+        {
+            // Log error for invalid JSON
+            Console.WriteLine($"Error parsing JSON: {ex.Message}");
+        }
+        catch (IOException ex)
+        {
+            // Log error for file I/O issues
+            Console.WriteLine($"Error saving file: {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            // Log general errors
+            Console.WriteLine($"Unexpected error: {ex.Message}");
+        }
+    }
+
+    private IEnumerable<string> ExtractUrlsFromJson(Newtonsoft.Json.Linq.JToken json)
+    {
+        var urls = new List<string>();
+
+        // Traverse the JSON content recursively
+        TraverseJson(json, urls);
+
+        return urls;
+    }
+
+    private void TraverseJson(Newtonsoft.Json.Linq.JToken token, List<string> urls)
+    {
+        // Check if the token is a string and is a well-formed URI
+        if (token.Type == JTokenType.String && Uri.IsWellFormedUriString(token.ToString(), UriKind.Absolute))
+        {
+            urls.Add(token.ToString());
+        }
+
+        // Recursively traverse the child tokens
+        if (token is Newtonsoft.Json.Linq.JContainer container)
+        {
+            foreach (var child in container.Children())
+            {
+                TraverseJson(child, urls);
+            }
+        }
+    }
+
+
+    private async Task DownloadFilesAsync(IEnumerable<string> urls, string destinationFolder)
+    {
+        using (var httpClient = new HttpClient())
+        {
+            foreach (var url in urls)
+            {
+                //var url1 = "https://www.princexml.com/howcome/2016/samples/magic8/index.pdf";
+                var fileName = Path.GetFileName(new Uri(url).LocalPath);
+                var filePath = Path.Combine(destinationFolder, fileName);
+
+                try
+                {
+                    var response = await httpClient.GetAsync(url);
+                    response.EnsureSuccessStatusCode();
+   
+                    var fileContent = await response.Content.ReadAsByteArrayAsync();
+                    await File.WriteAllBytesAsync(filePath, fileContent);
+                    
+                   
+                }
+                catch (Exception ex)
+                {
+                    // Log error for HTTP request or file I/O issues
+                    Console.WriteLine($"Error downloading file: {ex.Message}");
+                }
+            }
+        }
     }
 }
