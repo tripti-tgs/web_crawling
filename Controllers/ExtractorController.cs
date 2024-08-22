@@ -1,6 +1,7 @@
 ﻿using Hangfire;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging; // Add this using directive
 using Newtonsoft.Json;
 using web_crawling.Models;
 
@@ -9,19 +10,23 @@ public class ExtractorController : Controller
     private readonly IWebsiteContentExtractor _websiteContentExtractor;
     private readonly List<ProjectData> _projects;
     private readonly IWebHostEnvironment _webHostEnvironment;
+    private readonly ILogger<ExtractorController> _logger; // Add logger field
 
     public ExtractorController(IWebsiteContentExtractor websiteContentExtractor,
-        IOptions<List<ProjectData>> projectDataOptions, IWebHostEnvironment webHostEnvironment)
+        IOptions<List<ProjectData>> projectDataOptions,
+        IWebHostEnvironment webHostEnvironment,
+        ILogger<ExtractorController> logger) // Inject logger
     {
         _websiteContentExtractor = websiteContentExtractor;
         _projects = projectDataOptions.Value;
         _webHostEnvironment = webHostEnvironment;
+        _logger = logger; // Assign logger
     }
 
     [HttpGet]
     public IActionResult Index()
     {
-
+        _logger.LogInformation("Accessing Index page with project list.");
         return View(_projects);
     }
 
@@ -30,6 +35,7 @@ public class ExtractorController : Controller
     {
         if (string.IsNullOrEmpty(selectedProjectName))
         {
+            _logger.LogWarning("Project selection was empty.");
             ViewBag.Status = "Error";
             ViewBag.Message = "Project selection is required.";
             return View("Index", _projects);
@@ -39,6 +45,7 @@ public class ExtractorController : Controller
 
         if (selectedProject == null)
         {
+            _logger.LogWarning("Selected project '{ProjectName}' was not found.", selectedProjectName);
             ViewBag.Status = "Error";
             ViewBag.Message = "Selected project not found.";
             return View("Index", _projects);
@@ -46,6 +53,7 @@ public class ExtractorController : Controller
 
         if (string.IsNullOrEmpty(selectedProject.Url) || selectedProject.Data == null || !selectedProject.Data.Any())
         {
+            _logger.LogWarning("Project '{ProjectName}' is missing URL or fields.", selectedProjectName);
             ViewBag.Status = "Error";
             ViewBag.Message = "Project URL or fields are missing.";
             return View("Index", _projects);
@@ -53,17 +61,18 @@ public class ExtractorController : Controller
 
         try
         {
+            _logger.LogInformation("Starting data extraction for project '{ProjectName}'.", selectedProjectName);
+
             var allResults = new List<Dictionary<string, object>>();
 
             var result = await _websiteContentExtractor.ExtractDataFromUrlAsync(
-               selectedProject.Name,
+                selectedProject.Name,
                 selectedProject.Url,
                 selectedProject.PageXpath,
                 selectedProject.Data,
                 selectedProject.LoginURL,
                 selectedProject.LoginData,
                 selectedProject.SubmitButtonXpath
-               
             );
 
             allResults.Add(result);
@@ -80,15 +89,16 @@ public class ExtractorController : Controller
             ViewBag.Url = selectedProject.Url;
             ViewBag.Fields = selectedProject.Data;
             ViewBag.selectedProjectName = selectedProjectName;
+
+            _logger.LogInformation("Data extraction succeeded for project '{ProjectName}'.", selectedProjectName);
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Failed to extract data for project '{ProjectName}'.", selectedProjectName);
             ViewBag.Status = "Error";
             ViewBag.Message = $"Failed to extract data: {ex.Message}";
         }
 
         return View("Index", _projects);
     }
-
-  
 }

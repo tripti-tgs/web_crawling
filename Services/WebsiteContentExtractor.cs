@@ -7,120 +7,112 @@ using OpenQA.Selenium.Support.UI;
 using SeleniumExtras.WaitHelpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using Microsoft.Extensions.Logging;
 
 public class WebsiteContentExtractor : IWebsiteContentExtractor, IDisposable
 {
     // Selenium WebDriver for interacting with the browser
-    private  IWebDriver driver;
+    private IWebDriver driver;
 
     // WebDriverWait to wait for certain conditions during interaction with the browser
-    private  WebDriverWait wait;
+    private WebDriverWait wait;
     private readonly IWebHostEnvironment _webHostEnvironment;
+    private readonly ILogger<WebsiteContentExtractor> _logger;
 
-    public WebsiteContentExtractor( IWebHostEnvironment webHostEnvironment)
+    public WebsiteContentExtractor(IWebHostEnvironment webHostEnvironment, ILogger<WebsiteContentExtractor> logger)
     {
         _webHostEnvironment = webHostEnvironment;
+        _logger = logger;
     }
+
     private void InitializeWebDriver()
     {
         if (driver == null)
         {
+            _logger.LogInformation("Initializing WebDriver.");
             driver = new ChromeDriver();
             wait = new WebDriverWait(driver, TimeSpan.FromSeconds(10));
         }
     }
-    public async Task<Dictionary<string, object>> ExtractDataFromUrlAsync(string? Name ,string url,
-        string? PageXpath, List<Field> fields, string? LoginURL, 
+
+    public async Task<Dictionary<string, object>> ExtractDataFromUrlAsync(string? Name, string url,
+        string? PageXpath, List<Field> fields, string? LoginURL,
         List<LoginField> LoginData, string? SubmitButtonXpath)
     {
-        // Dictionary to store the results of the extraction process
         var results = new Dictionary<string, object> { { "Status", "Success" } };
-
-        // List to store all extracted data from pages
         var allExtractedData = new List<Dictionary<string, object>>();
 
         try
         {
-            // Create an instance of HttpClient for making HTTP requests
+            _logger.LogInformation($"Starting data extraction from URL: {url}");
+
             using (var httpClient = new HttpClient())
             {
-                // Add a User-Agent header to mimic a request from a web browser
                 httpClient.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
 
-                // Fetch HTML content from the given URL
                 string html = await httpClient.GetStringAsync(url);
-
-                // Load the HTML content into HtmlAgilityPack for parsing
                 var htmlDoc = new HtmlDocument();
                 htmlDoc.LoadHtml(html);
 
-                // If LoginURL is provided, perform login operations using Selenium
                 if (!string.IsNullOrWhiteSpace(LoginURL))
                 {
                     InitializeWebDriver();
-                    // Navigate to the login URL
+                    _logger.LogInformation($"Navigating to login URL: {LoginURL}");
                     driver.Navigate().GoToUrl(LoginURL);
 
-                    // Fill out the login form with provided credentials
                     foreach (var field in LoginData)
                     {
+                        _logger.LogInformation($"Filling login field: {field.Name}");
                         driver.FindElement(By.Id(field.Name)).SendKeys(field.Value);
                     }
 
-                    // Wait for the submit button to be clickable
                     IWebElement loginButton = wait.Until(
                         ExpectedConditions.ElementToBeClickable(
                             By.XPath(SubmitButtonXpath)
                         )
                     );
 
-                    // Scroll to the submit button and click it
+                    _logger.LogInformation("Clicking the login button.");
                     ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].scrollIntoView(true);", loginButton);
                     loginButton.Click();
                 }
 
-                // If PageXpath is provided, handle pagination using Selenium
                 if (!string.IsNullOrWhiteSpace(PageXpath))
                 {
                     InitializeWebDriver();
-                    // Navigate to the initial URL
+                    _logger.LogInformation($"Handling pagination with XPath: {PageXpath}");
                     driver.Navigate().GoToUrl(url);
                     bool hasNextPage = true;
 
                     while (hasNextPage)
                     {
-                        // Extract data from the current page
                         var pageHtml = driver.PageSource;
                         htmlDoc.LoadHtml(pageHtml);
                         ExtractDataUsingXPaths(htmlDoc, fields, allExtractedData, results);
 
                         try
                         {
-                            // Wait for the pagination element to be available
                             wait.Until(ExpectedConditions.ElementExists(By.XPath(PageXpath)));
-
-                            // Click the pagination button
                             var nextPageButton = wait.Until(ExpectedConditions.ElementExists(By.XPath(PageXpath)));
+                            _logger.LogInformation("Clicking the next page button.");
                             nextPageButton.Click();
                             hasNextPage = true;
                         }
                         catch (WebDriverTimeoutException)
                         {
-                            // If the pagination element is not found within the timeout period
-                            hasNextPage = false;
+                            _logger.LogWarning($"Pagination XPath '{PageXpath}' did not match any elements. Pagination stopped.");
                             results["Status"] = "Warning";
                             results["PaginationError"] = $"Pagination XPath '{PageXpath}' did not match any elements. Pagination stopped.";
+                            hasNextPage = false;
                         }
                         catch (NoSuchElementException)
                         {
-                            // If no more pages are available
+                            _logger.LogWarning("No more pages available. Pagination stopped.");
                             hasNextPage = false;
-                            Console.WriteLine("Element not found, retrying...");
-                            System.Threading.Thread.Sleep(1000);
                         }
                         catch (Exception ex)
                         {
-                            // Handle any other errors during pagination
+                            _logger.LogError($"Error during pagination: {ex.Message}");
                             results["Status"] = "Error";
                             results["Error"] = $"Error during pagination: {ex.Message}";
                             hasNextPage = false;
@@ -129,255 +121,145 @@ public class WebsiteContentExtractor : IWebsiteContentExtractor, IDisposable
                 }
                 else
                 {
-                    // If no pagination, just extract data from the current page
+                    _logger.LogInformation("No pagination detected, extracting data from the current page.");
                     ExtractDataUsingXPaths(htmlDoc, fields, allExtractedData, results);
                 }
             }
 
-            // Store the extracted data in the results dictionary
-
-            // Initialize the list
             var allResults = new List<Dictionary<string, object>>();
-
-            // Add extracted data to the list
-            // (Assuming `allExtractedData` is a variable containing the data to add)
             allResults.AddRange(allExtractedData);
 
-            // Serialize the list to JSON
             var jsonValue = JsonConvert.SerializeObject(allResults, Formatting.Indented, new JsonSerializerSettings
             {
                 ReferenceLoopHandling = ReferenceLoopHandling.Ignore,
                 NullValueHandling = NullValueHandling.Ignore
             });
 
-            // Assuming `results` is a dictionary defined elsewhere
             results["ExtractedData"] = jsonValue;
-
-            // Save the JSON to a file
             await SaveJsonAsync(Name, jsonValue);
         }
         catch (Exception ex)
         {
-            // Handle any unexpected errors during the extraction process
+            _logger.LogError($"An unexpected error occurred: {ex.Message}");
             results["Status"] = "Error";
             results["Error"] = $"An unexpected error occurred: {ex.Message}. Please try again later.";
         }
         finally
         {
-            // Dispose of the Selenium WebDriver
+            _logger.LogInformation("Disposing of WebDriver.");
             Dispose();
         }
 
-        // Return the results of the extraction process
         return results;
     }
 
-    // Method to extract data from the HTML document using provided XPaths
     private void ExtractDataUsingXPaths(HtmlDocument htmlDoc, List<Field> fields, List<Dictionary<string, object>> allExtractedData, Dictionary<string, object> results)
     {
-        // List to store data extracted from the current page
         var pageExtractedData = new List<Dictionary<string, object>>();
 
-        // Iterate over each field to extract data using its XPath
         foreach (var field in fields)
         {
             try
             {
-                // Skip if XPath is missing or empty
                 if (string.IsNullOrWhiteSpace(field.Xpath))
                 {
+                    _logger.LogWarning($"XPath expression is missing or empty for field: {field.FieldName}");
                     results[field.FieldName] = "XPath expression is missing or empty.";
                     continue;
                 }
 
-                // Select nodes matching the provided XPath
                 var nodes = htmlDoc.DocumentNode.SelectNodes(field.Xpath);
                 if (nodes != null && nodes.Any())
                 {
-                    // Iterate over the matched nodes
                     for (int i = 0; i < nodes.Count; i++)
                     {
-                        // Ensure there is a dictionary for each node in pageExtractedData
                         if (pageExtractedData.Count <= i)
                         {
                             pageExtractedData.Add(new Dictionary<string, object>());
                         }
-                        // Process the node and add the result to the dictionary
                         pageExtractedData[i][field.FieldName] = ProcessNode(nodes[i]);
                     }
                 }
                 else
                 {
-                    // If no elements are found for the XPath, store a warning message
+                    _logger.LogWarning($"No elements found for the XPath: {field.Xpath}. Field: {field.FieldName}");
                     results[field.FieldName] = $"No elements found for the XPath: {field.Xpath}. Please verify the XPath expression.";
                 }
             }
             catch (XPathException ex)
             {
-                // Handle invalid XPath expressions
+                _logger.LogError($"Invalid XPath expression for field '{field.FieldName}': {ex.Message}");
                 results[field.FieldName] = $"Invalid XPath expression for field '{field.FieldName}': {ex.Message}. Please check the XPath syntax.";
                 results["Status"] = "Error";
             }
             catch (Exception ex)
             {
-                // Handle any other errors during the data extraction
+                _logger.LogError($"Error processing field '{field.FieldName}': {ex.Message}");
                 results[field.FieldName] = $"Error processing field '{field.FieldName}': {ex.Message}. Please check the XPath and ensure it is correct.";
                 results["Status"] = "Error";
             }
         }
 
-        // Add the extracted data from the current page to the overall list
         allExtractedData.AddRange(pageExtractedData);
     }
 
-    // Method to process an HtmlNode and extract relevant data based on its type
-    private static object ProcessNode(HtmlNode node)
-    {
-        if (node.NodeType == HtmlNodeType.Element)
-        {
-            // Handle specific HTML elements
-            switch (node.Name.ToLower())
-            {
-                case "img":
-                    // Extract image source and alt text
-                    var srcValue = node.GetAttributeValue("src", string.Empty);
-                    if (string.IsNullOrWhiteSpace(srcValue))
-                    {
-                        srcValue = node.GetAttributeValue("data-src", string.Empty);
-                    }
-                    return new Dictionary<string, string>
-                    {
-                        ["src"] = srcValue,
-                        ["alt"] = node.GetAttributeValue("alt", "")
-                    };
-                case "video":
-                    // Extract video source and poster image
-                    return new Dictionary<string, string>
-                    {
-                        ["src"] = node.GetAttributeValue("src", ""),
-                        ["poster"] = node.GetAttributeValue("poster", "")
-                    };
-                case "a":
-                    // Extract hyperlink href and text
-                    return new Dictionary<string, string>
-                    {
-                        ["href"] = node.GetAttributeValue("href", ""),
-                        ["text"] = node.InnerText.Trim()
-                    };
-                case "h1":
-                case "h2":
-                case "h3":
-                case "h4":
-                case "h5":
-                case "h6":
-                case "p":
-                    // Extract text from headers and paragraphs
-                    return node.InnerText.Trim();
-                case "ul":
-                case "ol":
-                    // Extract list items
-                    var listItems = node.SelectNodes(".//li");
-                    return listItems != null ? listItems.Select(li => li.InnerText.Trim()).ToList() : new List<string>();
-                default:
-                    // For other elements, return inner HTML
-                    return new List<string> { node.InnerHtml.Trim() };
-            }
-        }
-        else if (node.NodeType == HtmlNodeType.Text)
-        {
-            // Extract text content
-            return node.InnerText.Trim();
-        }
-        else
-        {
-            // Extract inner HTML for other node types
-            return node.InnerHtml.Trim();
-        }
-    }
-
-    // Dispose method to clean up the WebDriver instance
-    public void Dispose()
-    {
-        if (driver != null)
-        {
-            driver.Quit();
-            driver.Dispose();
-            driver = null;
-        }
-    }
     private async Task SaveJsonAsync(string selectedProjectName, string fileContent)
     {
         if (string.IsNullOrWhiteSpace(fileContent) || string.IsNullOrEmpty(selectedProjectName))
         {
-            // Handle empty content or name
+            _logger.LogWarning("File content or project name is empty, skipping save operation.");
             return;
         }
 
         try
         {
-            // Validate and parse the JSON content
-            var parsedJson = Newtonsoft.Json.Linq.JToken.Parse(fileContent);
+            _logger.LogInformation($"Saving JSON content for project: {selectedProjectName}");
 
-            // Specify a custom directory path for the JSON file
+            var parsedJson = JToken.Parse(fileContent);
             string customDirectory = Path.Combine("Uploads", $"{selectedProjectName}-{DateTime.Now:yyyyMMdd_HHmmss}");
             Directory.CreateDirectory(customDirectory);
 
-            // Construct the full file path with the ".json" extension
             string filePath = Path.Combine(customDirectory, $"{selectedProjectName}.json");
-           
-            // Create a new subfolder for the assets
+
             string assetsDirectory = Path.Combine(customDirectory, "assets");
             Directory.CreateDirectory(assetsDirectory);
 
-
-            // Save the JSON content to the specified file
             await System.IO.File.WriteAllTextAsync(filePath, fileContent);
 
-            // Extract URLs from the JSON content
             var urls = ExtractUrlsFromJson(parsedJson);
+            await DownloadFilesAsync(urls, assetsDirectory);
 
-            // Download files into the same directory
-           // var newURL = "https://www.princexml.com/howcome/2016/samples/magic8/index.pdf";
-                await DownloadFilesAsync(urls, assetsDirectory);
-            
+            _logger.LogInformation("JSON content and associated files saved successfully.");
         }
-        catch (Newtonsoft.Json.JsonException ex)
+        catch (JsonException ex)
         {
-            // Log error for invalid JSON
-            Console.WriteLine($"Error parsing JSON: {ex.Message}");
+            _logger.LogError($"Error parsing JSON: {ex.Message}");
         }
         catch (IOException ex)
         {
-            // Log error for file I/O issues
-            Console.WriteLine($"Error saving file: {ex.Message}");
+            _logger.LogError($"Error saving file: {ex.Message}");
         }
         catch (Exception ex)
         {
-            // Log general errors
-            Console.WriteLine($"Unexpected error: {ex.Message}");
+            _logger.LogError($"Unexpected error: {ex.Message}");
         }
     }
 
-    private IEnumerable<string> ExtractUrlsFromJson(Newtonsoft.Json.Linq.JToken json)
+    private IEnumerable<string> ExtractUrlsFromJson(JToken json)
     {
         var urls = new List<string>();
-
-        // Traverse the JSON content recursively
         TraverseJson(json, urls);
-
         return urls;
     }
 
-    private void TraverseJson(Newtonsoft.Json.Linq.JToken token, List<string> urls)
+    private void TraverseJson(JToken token, List<string> urls)
     {
-        // Check if the token is a string and is a well-formed URI
         if (token.Type == JTokenType.String && Uri.IsWellFormedUriString(token.ToString(), UriKind.Absolute))
         {
             urls.Add(token.ToString());
         }
 
-        // Recursively traverse the child tokens
-        if (token is Newtonsoft.Json.Linq.JContainer container)
+        if (token is JContainer container)
         {
             foreach (var child in container.Children())
             {
@@ -386,33 +268,115 @@ public class WebsiteContentExtractor : IWebsiteContentExtractor, IDisposable
         }
     }
 
-
     private async Task DownloadFilesAsync(IEnumerable<string> urls, string destinationFolder)
     {
         using (var httpClient = new HttpClient())
         {
             foreach (var url in urls)
             {
-                //var url1 = "https://www.princexml.com/howcome/2016/samples/magic8/index.pdf";
-                var fileName = Path.GetFileName(new Uri(url).LocalPath);
-                var filePath = Path.Combine(destinationFolder, fileName);
-
                 try
                 {
+                    _logger.LogInformation($"Attempting to download file from URL: {url}");
+
+                    var fileName = Path.GetFileName(new Uri(url).LocalPath);
+                    var fileExtension = Path.GetExtension(fileName)?.ToLower();
+
+                    // Determine the folder name based on file extension
+                    string subFolder = fileExtension switch
+                    {
+                        ".pdf" => "pdf",
+                        ".jpg" or ".jpeg" or ".png" or ".gif" => "images",
+                        ".doc" or ".docx" => "documents",
+                        ".zip" => "archives",
+                        _ => "others" // Default folder for unsupported or unknown file types
+                    };
+
+                    // Combine the destination folder with the subfolder
+                    var folderPath = Path.Combine(destinationFolder, subFolder);
+
+                    // Ensure the subfolder exists
+                    if (!Directory.Exists(folderPath))
+                    {
+                        Directory.CreateDirectory(folderPath);
+                        _logger.LogInformation($"Created subfolder: {folderPath}");
+                    }
+
+                    var filePath = Path.Combine(folderPath, fileName);
+
                     var response = await httpClient.GetAsync(url);
                     response.EnsureSuccessStatusCode();
-   
                     var fileContent = await response.Content.ReadAsByteArrayAsync();
                     await File.WriteAllBytesAsync(filePath, fileContent);
-                    
-                   
+
+                    _logger.LogInformation($"Successfully downloaded and saved file: {filePath}");
+                }
+                catch (HttpRequestException ex)
+                {
+                    _logger.LogError($"HTTP request error while downloading file from {url}: {ex.Message}");
+                }
+                catch (IOException ex)
+                {
+                    _logger.LogError($"I/O error while saving file from {url}: {ex.Message}");
+                }
+                catch (UriFormatException ex)
+                {
+                    _logger.LogError($"Invalid URL format for {url}: {ex.Message}");
                 }
                 catch (Exception ex)
                 {
-                    // Log error for HTTP request or file I/O issues
-                    Console.WriteLine($"Error downloading file: {ex.Message}");
+                    _logger.LogError($"Unexpected error downloading file from {url}: {ex.Message}");
                 }
             }
         }
+    }
+
+    private object ProcessNode(HtmlNode node)
+    {
+        _logger.LogInformation($"Processing node of type: {node.Name}");
+
+        switch (node.Name.ToLower())
+        {
+            case "ul":
+            case "ol":
+                _logger.LogInformation("Extracting list items");
+                var listItems = node.SelectNodes(".//li");
+                if (listItems != null)
+                {
+                    var extractedItems = listItems.Select(li => li.InnerText.Trim()).ToList();
+                    _logger.LogInformation($"Extracted {extractedItems.Count} list items");
+                    return extractedItems;
+                }
+                else
+                {
+                    _logger.LogWarning("No list items found in the ul/ol element");
+                    return new List<string>();
+                }
+
+            default:
+                string text = node.InnerText.Trim();
+                string imageUrl = node.GetAttributeValue("src", "");
+                string linkUrl = node.GetAttributeValue("href", "");
+
+                if (!string.IsNullOrEmpty(imageUrl))
+                {
+                    _logger.LogInformation($"Extracted image URL: {imageUrl}");
+                    return imageUrl;
+                }
+                if (!string.IsNullOrEmpty(linkUrl))
+                {
+                    _logger.LogInformation($"Extracted link URL: {linkUrl}");
+                    return linkUrl;
+                }
+
+                _logger.LogInformation($"Extracted text content: {text}");
+                return text;
+        }
+    }
+
+    public void Dispose()
+    {
+        _logger.LogInformation("Disposing resources.");
+        driver?.Quit();
+        driver?.Dispose();
     }
 }

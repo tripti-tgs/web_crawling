@@ -1,13 +1,31 @@
 using Hangfire;
 using Hangfire.MySql;
+using Microsoft.Extensions.Logging;
 using web_crawling.Models;
+using Serilog;
+using Serilog.Events;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Configure Serilog
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Debug()
+    .MinimumLevel.Override("Microsoft", LogEventLevel.Information)
+    .Enrich.FromLogContext()
+    .WriteTo.Console()
+.WriteTo.File("logs/myapp-.log",
+    rollingInterval: RollingInterval.Day,
+    rollOnFileSizeLimit: true,
+    shared: true,
+    flushToDiskInterval: TimeSpan.FromSeconds(1))
+    .CreateLogger();
+
+// Use Serilog for .NET Core logging
+builder.Logging.ClearProviders();
+builder.Logging.AddSerilog(Log.Logger);
+
 // Add services to the container.
 builder.Services.AddControllersWithViews();
-
-
 
 // Configure Hangfire
 builder.Services.AddHangfire(configuration => configuration
@@ -19,10 +37,8 @@ builder.Services.AddHangfire(configuration => configuration
         new MySqlStorageOptions()
     )));
 
-
 // Add Hangfire server
 builder.Services.AddHangfireServer();
-
 
 // Configure strongly typed settings object
 builder.Services.Configure<List<ProjectData>>(
@@ -52,28 +68,26 @@ var settings = app.Services.GetRequiredService<IConfiguration>()
              .GetSection("WebsiteContentSettings")
              .Get<List<WebsiteContentSetting>>();
 
-//var webService = app.Services.GetRequiredService<IWebsiteContentExtractor>();
-
 using (var scope = app.Services.CreateScope())
 {
     var serviceProvider = scope.ServiceProvider;
-
-    // Resolve the IUserService from the scoped service provider
+    var logger = serviceProvider.GetRequiredService<ILogger<Program>>();
     var webService = serviceProvider.GetRequiredService<IWebsiteContentExtractor>();
 
-    // Call the static method and pass the IUserService
-
+    logger.LogInformation("Scheduling job to scrape websites.");
     RecurringJob.AddOrUpdate(
         "Scrape",
         () => JobScheduler.ExecuteJob(settings, webService),
         Cron.Minutely  // Adjust the schedule as needed
     );
+    logger.LogInformation("Job scheduled successfully.");
 }
-
-
 
 app.MapControllerRoute(
     name: "default",
     pattern: "{controller=Extractor}/{action=Index}/{id?}");
+
+// Ensure any buffered logs are written before the app shuts down
+app.Lifetime.ApplicationStopped.Register(Log.CloseAndFlush);
 
 app.Run();
